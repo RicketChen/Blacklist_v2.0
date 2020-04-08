@@ -7,10 +7,12 @@ import (
 	"github.com/lestrrat/go-file-rotatelogs"
 	"github.com/rifflock/lfshook"
 	"github.com/sirupsen/logrus"
+	"io"
 	"log"
 	"net"
 	"os"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -146,11 +148,11 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 			methodColor = blue
 		}
 
-		/*		if logFile == nil {
-				os.MkdirAll(logFilePath, 0755)
-				logFile, _ = os.OpenFile(logFilePath+logFilename, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
-				logger.SetOutput(io.MultiWriter(logFile))
-			}*/
+		if logFile == nil {
+			os.MkdirAll(logFilePath, 0755)
+			logFile, _ = os.OpenFile(logFilePath+logFilename, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
+			logger.SetOutput(io.MultiWriter(logFile, os.Stdout))
+		}
 
 		logger.Info(fmt.Sprintf("%v |%s %3d %s| %10v | %15s |%s %-5s %s %#v\n",
 			t.Format("2006/01/01 - 15:04:05"),
@@ -175,30 +177,30 @@ func main() {
 	newlog.Formatter = new(logrus.TextFormatter)
 	//	newlog.Formatter = new(logrus.JSONFormatter)
 
-	newlog.SetLevel(logrus.WarnLevel)
+	newlog.SetLevel(logrus.InfoLevel)
 
 	newlog.Formatter.(*logrus.TextFormatter).DisableTimestamp = true
 	newlog.Formatter.(*logrus.TextFormatter).ForceColors = true
 
-	/*	var firstMinute int = 0
-		go func() {
-			for {
-				if firstMinute != time.Now().Minute() {
-					timeHour := time.Now().Format("2006-01-02")
-					timeMin := time.Now().Format("2006-01-02-15")
-					filePath := "./" + timeHour + "/"
-					fileName := strings.Replace(timeMin, ":", "", -1)
-					if logFile != nil {
-						logFile.Close()
-						logFile = nil
-					}
-					firstMinute = time.Now().Minute()
-					logFilePath = filePath
-					logFilename = fileName + ".log"
+	var firstMinute int = 0
+	go func() {
+		for {
+			if firstMinute != time.Now().Minute() {
+				timeHour := time.Now().Format("2006-01-02")
+				timeMin := time.Now().Format("2006-01-02-15")
+				filePath := "./" + timeHour + "/"
+				fileName := strings.Replace(timeMin, ":", "", -1)
+				if logFile != nil {
+					logFile.Close()
+					logFile = nil
 				}
-				time.Sleep(time.Second)
+				firstMinute = time.Now().Minute()
+				logFilePath = filePath
+				logFilename = fileName + ".log"
 			}
-		}()*/
+			time.Sleep(time.Second)
+		}
+	}()
 	/*	go func() {
 		for {
 			timeHour := time.Now().Format("2006-01-02")
