@@ -7,12 +7,10 @@ import (
 	"github.com/lestrrat/go-file-rotatelogs"
 	"github.com/rifflock/lfshook"
 	"github.com/sirupsen/logrus"
-	"io"
 	"log"
 	"net"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -148,24 +146,16 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 			methodColor = blue
 		}
 
-		timeHour := time.Now().Format("2006-01-02")
-		timeMin := time.Now().Format("2006-01-02-15")
-		filePath := "./" + timeHour + "/"
-		fileName := strings.Replace(timeMin, ":", "", -1)
-		os.MkdirAll(filePath, 0755)
-		if logFile != nil {
-//			if err := logFile.Close(); err != nil {
-//				log.Fatalln(err)
-//			}
-		}
-		logFile, _ = os.OpenFile(filePath+fileName+".log", os.O_RDWR|os.O_APPEND|os.O_CREATE, 0755)
+		/*		if logFile == nil {
+				os.MkdirAll(logFilePath, 0755)
+				logFile, _ = os.OpenFile(logFilePath+logFilename, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
+				logger.SetOutput(io.MultiWriter(logFile))
+			}*/
 
-		logger.SetOutput(io.MultiWriter(logFile, os.Stdout))
-		//		log.Println(status)
 		logger.Info(fmt.Sprintf("%v |%s %3d %s| %10v | %15s |%s %-5s %s %#v\n",
 			t.Format("2006/01/01 - 15:04:05"),
 			statusCodeColor, status, reset,
-			latency.Milliseconds(),
+			latency,
 			context.Request.RemoteAddr,
 			methodColor, context.Request.Method, reset,
 			context.Request.URL.Path,
@@ -174,30 +164,42 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 }
 
 var logFile *os.File
+var logFilePath string
+var logFilename string
 
 func main() {
 
 	newlog := logrus.New()
 
+	gin.ForceConsoleColor()
 	newlog.Formatter = new(logrus.TextFormatter)
 	//	newlog.Formatter = new(logrus.JSONFormatter)
 
-	newlog.SetLevel(logrus.InfoLevel)
+	newlog.SetLevel(logrus.WarnLevel)
 
 	newlog.Formatter.(*logrus.TextFormatter).DisableTimestamp = true
 	newlog.Formatter.(*logrus.TextFormatter).ForceColors = true
 
-	firstMinute := time.Now().Minute()
-	go func() {
-		if firstMinute < time.Now().Minute(){
-			if logFile != nil{
-				logFile.Close()
-				firstMinute=time.Now().Minute()
+	/*	var firstMinute int = 0
+		go func() {
+			for {
+				if firstMinute != time.Now().Minute() {
+					timeHour := time.Now().Format("2006-01-02")
+					timeMin := time.Now().Format("2006-01-02-15")
+					filePath := "./" + timeHour + "/"
+					fileName := strings.Replace(timeMin, ":", "", -1)
+					if logFile != nil {
+						logFile.Close()
+						logFile = nil
+					}
+					firstMinute = time.Now().Minute()
+					logFilePath = filePath
+					logFilename = fileName + ".log"
+				}
+				time.Sleep(time.Second)
 			}
-		}
-		time.Sleep(time.Second)
-	}()
-/*	go func() {
+		}()*/
+	/*	go func() {
 		for {
 			timeHour := time.Now().Format("2006-01-02")
 			timeMin := time.Now().Format("2006-01-02-15")
@@ -235,13 +237,14 @@ func main() {
 	//	MyLOG.Info.Println("TEST")
 
 	router := gin.New()
-	gin.ForceConsoleColor()
 	//	router := gin.Default()
 	router.Use(Logger(newlog))
 
 	router.POST("/vos3000/blacklist", mainHandler)
-	router.Run(IPAddress+":"+port)
+	router.Run(IPAddress + ":" + port)
+	for {
 
+	}
 }
 
 func mainHandler(ctx *gin.Context) {
