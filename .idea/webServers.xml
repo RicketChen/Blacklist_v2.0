@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="fbd313bb-2682-436a-ad47-d5967baa042d" name="aliyunHarry" url="http://47.106.101.160">
+        <fileTransfer host="47.106.101.160" port="22" rootFolder="/home/harry/mygo/Blacklist_v2.0" accessType="SFTP">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+          <option name="port" value="22" />
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>
