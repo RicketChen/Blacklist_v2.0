@@ -59,21 +59,8 @@ func FlagArgs(port *string) {
 	flag.Parse()
 }
 
-const (
-	green   = "\033[97;42m"
-	white   = "\033[90;47m"
-	yellow  = "\033[90;43m"
-	red     = "\033[97;41m"
-	blue    = "\033[97;44m"
-	magenta = "\033[97;45m"
-	cyan    = "\033[97;46m"
-	reset   = "\033[0m"
-)
-
 func Logger(logger *logrus.Logger) gin.HandlerFunc {
 	return func(context *gin.Context) {
-		statusCodeColor := green
-		methodColor := cyan
 		t := time.Now()
 
 		//before request
@@ -84,25 +71,6 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 
 		//get status
 		status := context.Writer.Status()
-		if status == 404 {
-			statusCodeColor = red
-		} else {
-			statusCodeColor = yellow
-		}
-		//get request method
-		method := context.Request.Method
-		if method != "POST" {
-			methodColor = blue
-		}
-		statusCodeColor = statusCodeColor
-		methodColor = methodColor
-
-		//	logFilePath := time.Now().Format("2006-01-02-15-04-05")
-		//	os.MkdirAll(logFilePath, 0755)
-		/*		if logFile == nil {
-				logFile, _ = os.OpenFile(logFilePath+logFilename, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
-				logger.SetOutput(io.MultiWriter(logFile, os.Stdout))
-			}*/
 
 		bufBody, _ := context.Get("bufBody")
 
@@ -128,7 +96,7 @@ func setRotate(logger *logrus.Logger) logrus.Hook {
 
 	logWrite, _ := rotatelogs.New(
 		"%Y-%m-%d/%H/"+"%Y%m%d%H.log",
-		rotatelogs.WithLinkName("fileLog.log"),
+		rotatelogs.WithLinkName("./fileLog.log"),
 		rotatelogs.WithMaxAge(time.Hour),
 		rotatelogs.WithRotationTime(time.Hour),
 	)
@@ -175,52 +143,12 @@ func main() {
 
 	serverLog.SetLevel(logrus.InfoLevel)
 
-	var b DefaultFieldHook
-	serverLog.AddHook(&b)
+	serverLog.AddHook(&DefaultFieldHook{})
 
 	setRotate(serverLog)
-	//	serverLog.AddHook(a)
-	/*
-		a := `{"TEST":{"TEST":"ASD"}}`
 
-
-		file, _ := os.OpenFile("./test.txt", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
-
-		js := json.NewEncoder(file)
-		js.SetEscapeHTML(false)
-
-		log.SetOutput(file)
-		log.Println(a)
-
-		logrus.SetOutput(file)
-		logrus.Println(a)*/
-
-	//	serverLog.Info(a)
-
-	/*	var firstMinute int = 0
-		go func() {
-			for {
-				if firstMinute != time.Now().Minute() {
-					timeHour := time.Now().Format("2006-01-02")
-					timeMin := time.Now().Format("2006-01-02-15")
-					filePath := "./" + timeHour + "/"
-					fileName := strings.Replace(timeMin, ":", "", -1)
-					if logFile != nil {
-						logFile.Close()
-						logFile = nil
-					}
-					firstMinute = time.Now().Minute()
-					logFilePath = filePath
-					logFilename = fileName + ".log"
-				}
-				time.Sleep(time.Second)
-			}
-		}()*/
-
-	gin.SetMode("debug")
 	router := gin.New()
 
-	//	router := gin.Default()
 	router.Use(Logger(serverLog))
 
 	router.POST("/vos3000/blacklist", blacklistHandler)
@@ -273,6 +201,7 @@ func blacklistHandler(ctx *gin.Context) {
 
 		strBackCallee, _ := jsResp.GetPath("RewriteE164Req", "calleeE1644").String()
 
+		//
 		byteResult, _ = jsBody.MarshalJSON()
 		if len(strBackCallee) != 11 {
 			byteResult, _ = jsResp.MarshalJSON()
