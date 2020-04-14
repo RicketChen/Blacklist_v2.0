@@ -1,18 +1,18 @@
 package main
 
 import (
+	"bytes"
 	"flag"
-	"fmt"
+	"github.com/bitly/go-simplejson"
 	"github.com/gin-gonic/gin"
 	"github.com/lestrrat/go-file-rotatelogs"
-	"github.com/rifflock/lfshook"
 	"github.com/sirupsen/logrus"
+	"github.com/valyala/fasthttp"
 	"io"
 	"log"
 	"net"
 	"os"
 	"regexp"
-	"strings"
 	"time"
 )
 
@@ -54,59 +54,9 @@ func GetLocalIpAddress(IP *string, InterfaceName string) {
 	}
 }
 
-func FlagArgs(level *int, logEnable *bool, logFilename *string, port *string) {
-	*level = *flag.Int("level", 3, "specify log level,0 for no log,5 for TRACE to ERROR,4 for DEBUG to ERROR,3 for INFO to ERROR(default),2 for WARNING to ERROR,1 for ERROR")
-	*logFilename = *flag.String("log", "", "specific a filename as log filename")
-	*logEnable = *flag.Bool("l", true, "enable/disable log file by with or without -l")
+func FlagArgs(port *string) {
 	*port = *flag.String("port", "8080", "specify a http port for use,default port:8080")
 	flag.Parse()
-}
-func Logger1() gin.HandlerFunc {
-	logClient := logrus.New()
-
-	//禁止logrus的输出
-	apiLogPath := "./api.log"
-	src, err := os.OpenFile(apiLogPath, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
-	if err != nil {
-		fmt.Println("err", err)
-	}
-	logClient.Out = src
-	logClient.SetLevel(logrus.DebugLevel)
-	logWriter, err := rotatelogs.New(
-		apiLogPath+".%Y-%m-%d-%H-%M.log",
-		rotatelogs.WithLinkName(apiLogPath),       // 生成软链，指向最新日志文件
-		rotatelogs.WithMaxAge(7*24*time.Hour),     // 文件最大保存时间
-		rotatelogs.WithRotationTime(24*time.Hour), // 日志切割时间间隔
-	)
-	writeMap := lfshook.WriterMap{
-		logrus.InfoLevel:  logWriter,
-		logrus.FatalLevel: logWriter,
-	}
-	lfHook := lfshook.NewHook(writeMap, &logrus.JSONFormatter{})
-	logClient.AddHook(lfHook)
-
-	return func(c *gin.Context) {
-		// 开始时间
-		start := time.Now()
-		// 处理请求
-		c.Next()
-		// 结束时间
-		end := time.Now()
-		//执行时间
-		latency := end.Sub(start)
-
-		path := c.Request.URL.Path
-
-		clientIP := c.ClientIP()
-		method := c.Request.Method
-		statusCode := c.Writer.Status()
-		logClient.Infof("| %3d | %13v | %15s | %s  %s |",
-			statusCode,
-			latency,
-			clientIP,
-			method, path,
-		)
-	}
 }
 
 const (
@@ -126,14 +76,11 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 		methodColor := cyan
 		t := time.Now()
 
-		context.Set("example", "test")
-
 		//before request
 		context.Next()
 
 		//after request
 		latency := time.Since(t)
-		//log.Printf("%13v",latency)
 
 		//get status
 		status := context.Writer.Status()
@@ -147,109 +94,196 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 		if method != "POST" {
 			methodColor = blue
 		}
+		statusCodeColor = statusCodeColor
+		methodColor = methodColor
 
-		if logFile == nil {
-			os.MkdirAll(logFilePath, 0755)
-			logFile, _ = os.OpenFile(logFilePath+logFilename, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
-			logger.SetOutput(io.MultiWriter(logFile, os.Stdout))
-		}
+		//	logFilePath := time.Now().Format("2006-01-02-15-04-05")
+		//	os.MkdirAll(logFilePath, 0755)
+		/*		if logFile == nil {
+				logFile, _ = os.OpenFile(logFilePath+logFilename, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
+				logger.SetOutput(io.MultiWriter(logFile, os.Stdout))
+			}*/
 
-		logger.Info(fmt.Sprintf("%v |%s %3d %s| %10v | %15s |%s %-5s %s %#v\n",
-			t.Format("2006/01/01 - 15:04:05"),
-			statusCodeColor, status, reset,
-			latency,
-			context.Request.RemoteAddr,
-			methodColor, context.Request.Method, reset,
-			context.Request.URL.Path,
-		))
+		bufBody, _ := context.Get("bufBody")
+
+		logger.WithFields(logrus.Fields{
+			"role":       "server",
+			"statusCode": status,
+			"latency":    latency,
+			"clientID":   context.Request.RemoteAddr,
+			"Method":     context.Request.Method,
+			"Path":       context.Request.URL.Path,
+		}).Info(bytes.NewBuffer(bufBody.([]byte)).String())
+
+		interfaceResp, _ := context.Get("response")
+		Resp := interfaceResp.(*fasthttp.Response)
+		logger.WithFields(logrus.Fields{
+			"role":   "client",
+			"status": Resp.StatusCode(),
+		}).Info(bytes.NewBuffer(Resp.Body()).String())
 	}
 }
 
-var logFile *os.File
-var logFilePath string
-var logFilename string
+func setRotate(logger *logrus.Logger) logrus.Hook {
+
+	logWrite, _ := rotatelogs.New(
+		"%Y-%m-%d/%H/"+"%Y%m%d%H.log",
+		rotatelogs.WithLinkName("fileLog.log"),
+		rotatelogs.WithMaxAge(time.Hour),
+		rotatelogs.WithRotationTime(time.Hour),
+	)
+
+	logger.SetOutput(io.MultiWriter(logWrite, os.Stdout))
+
+	return nil
+}
+
+type DefaultFieldHook struct {
+}
+
+func (hook *DefaultFieldHook) Fire(entry *logrus.Entry) error {
+	filePath := time.Now().Format("2006-01-02/15")
+	os.MkdirAll(filePath, 0755)
+	return nil
+}
+
+func (hook *DefaultFieldHook) Levels() []logrus.Level {
+	return logrus.AllLevels
+}
+
+var serverLog *logrus.Logger
 
 func main() {
 
-	newlog := logrus.New()
-
-	gin.ForceConsoleColor()
-	newlog.Formatter = new(logrus.TextFormatter)
-	//	newlog.Formatter = new(logrus.JSONFormatter)
-
-	newlog.SetLevel(logrus.InfoLevel)
-
-	newlog.Formatter.(*logrus.TextFormatter).DisableTimestamp = true
-	newlog.Formatter.(*logrus.TextFormatter).ForceColors = true
-
-	var firstMinute int = 0
-	go func() {
-		for {
-			if firstMinute != time.Now().Minute() {
-				timeHour := time.Now().Format("2006-01-02")
-				timeMin := time.Now().Format("2006-01-02-15")
-				filePath := "./" + timeHour + "/"
-				fileName := strings.Replace(timeMin, ":", "", -1)
-				if logFile != nil {
-					logFile.Close()
-					logFile = nil
-				}
-				firstMinute = time.Now().Minute()
-				logFilePath = filePath
-				logFilename = fileName + ".log"
-			}
-			time.Sleep(time.Second)
-		}
-	}()
-	/*	go func() {
-		for {
-			timeHour := time.Now().Format("2006-01-02")
-			timeMin := time.Now().Format("2006-01-02-15")
-			nowTime := time.Now().Hour()
-			if nowTime >= firstTime.Hour() {
-				filePath := "./" + timeHour + "/"
-				fileName := strings.Replace(timeMin, ":", "", -1)
-				os.MkdirAll(filePath, 755)
-				if logFile != nil {
-					if err := logFile.Close(); err != nil {
-						log.Fatalln(err)
-					}
-				}
-				logFile, _ = os.OpenFile(filePath+fileName+".log", os.O_RDWR|os.O_APPEND|os.O_CREATE, 755)
-
-				newlog.SetOutput(io.MultiWriter(logFile, os.Stdout))
-				firstTime = time.Now()
-			}
-			time.Sleep(time.Second)
-		}
-	}()*/
-
-	var level int
-	var logEnable bool
-	var logFilename string
 	var port string
-
 	var IPAddress string
 	GetLocalIpAddress(&IPAddress, "WLAN")
+	FlagArgs(&port)
+	serverLog = logrus.New()
 
-	FlagArgs(&level, &logEnable, &logFilename, &port)
-
-	//	MyLOG.LogInit(level, logEnable, logFilename)
-
-	//	MyLOG.Info.Println("TEST")
-
-	router := gin.New()
-	//	router := gin.Default()
-	router.Use(Logger(newlog))
-
-	router.POST("/vos3000/blacklist", mainHandler)
-	router.Run(IPAddress + ":" + port)
-	for {
-
+	gin.SetMode(gin.ReleaseMode)
+	if gin.Mode() == gin.DebugMode {
+		textFormatter := new(logrus.TextFormatter)
+		textFormatter.TimestampFormat = "2006/01/02-15:04:05"
+		textFormatter.ForceColors = false
+		serverLog.SetFormatter(textFormatter)
+	} else {
+		jsonFormatter := new(logrus.JSONFormatter)
+		jsonFormatter.TimestampFormat = "2006/01/02-15:04:05"
+		serverLog.SetFormatter(jsonFormatter)
 	}
+
+	serverLog.SetLevel(logrus.InfoLevel)
+
+	var b DefaultFieldHook
+	serverLog.AddHook(&b)
+
+	setRotate(serverLog)
+	//	serverLog.AddHook(a)
+	/*
+		a := `{"TEST":{"TEST":"ASD"}}`
+
+
+		file, _ := os.OpenFile("./test.txt", os.O_CREATE|os.O_APPEND|os.O_RDWR, 0755)
+
+		js := json.NewEncoder(file)
+		js.SetEscapeHTML(false)
+
+		log.SetOutput(file)
+		log.Println(a)
+
+		logrus.SetOutput(file)
+		logrus.Println(a)*/
+
+	//	serverLog.Info(a)
+
+	/*	var firstMinute int = 0
+		go func() {
+			for {
+				if firstMinute != time.Now().Minute() {
+					timeHour := time.Now().Format("2006-01-02")
+					timeMin := time.Now().Format("2006-01-02-15")
+					filePath := "./" + timeHour + "/"
+					fileName := strings.Replace(timeMin, ":", "", -1)
+					if logFile != nil {
+						logFile.Close()
+						logFile = nil
+					}
+					firstMinute = time.Now().Minute()
+					logFilePath = filePath
+					logFilename = fileName + ".log"
+				}
+				time.Sleep(time.Second)
+			}
+		}()*/
+
+	gin.SetMode("debug")
+	router := gin.New()
+
+	//	router := gin.Default()
+	router.Use(Logger(serverLog))
+
+	router.POST("/vos3000/blacklist", blacklistHandler)
+	router.Run(IPAddress + ":" + port)
+
 }
 
-func mainHandler(ctx *gin.Context) {
+func blacklistHandler(ctx *gin.Context) {
 
-	ctx.JSON(200, gin.H{"a": "data"})
+	var byteResult []byte
+
+	requestUrl := "http://47.112.31.183:9993/vos_yt/blacklist/vos30002160"
+
+	BodyGet := ctx.Request.Body
+
+	jsBody, _ := simplejson.NewFromReader(BodyGet)
+
+	bufBody, _ := jsBody.MarshalJSON()
+
+	ctx.Set("bufBody", bufBody)
+
+	strCallee, _ := jsBody.GetPath("RewriteE164Req", "calleeE164").String()
+
+	lenCallee := len(strCallee)
+	response := fasthttp.AcquireResponse()
+	if lenCallee >= 11 {
+
+		//	strPrefix := strCallee[:lenCallee-11]
+
+		strSuffix := strCallee[lenCallee-11:]
+
+		bufBody, _ := jsBody.MarshalJSON()
+		newJsBody, _ := simplejson.NewJson(bufBody)
+
+		newJsBody.SetPath([]string{"RewriteE164Req", "calleeE164"}, strSuffix)
+
+		byteNewBody, _ := newJsBody.MarshalJSON()
+
+		request := fasthttp.AcquireRequest()
+		request.Header.SetMethod("POST")
+		request.Header.SetContentType("application/json")
+		request.SetRequestURI(requestUrl)
+		request.SetBody(byteNewBody)
+
+		fasthttp.Do(request, response)
+
+		byteResp := response.Body()
+
+		jsResp, _ := simplejson.NewJson(byteResp)
+
+		strBackCallee, _ := jsResp.GetPath("RewriteE164Req", "calleeE1644").String()
+
+		byteResult, _ = jsBody.MarshalJSON()
+		if len(strBackCallee) != 11 {
+			byteResult, _ = jsResp.MarshalJSON()
+		}
+	} else {
+		jsBody.SetPath([]string{"RewriteE164Req", "calleeE1644"}, "Wrong"+strCallee)
+		byteResult, _ = jsBody.MarshalJSON()
+	}
+
+	ctx.Set("response", response)
+
+	ctx.Header("Content-Type", "application/json")
+	ctx.Writer.Write(byteResult)
 }
