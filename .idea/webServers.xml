@@ -3,11 +3,10 @@
   <component name="WebServers">
     <option name="servers">
       <webServer id="fbd313bb-2682-436a-ad47-d5967baa042d" name="aliyunHarry" url="http://47.106.101.160">
-        <fileTransfer host="47.106.101.160" port="22" rootFolder="/home/harry/mygo/Blacklist_v2.0" accessType="SFTP">
+        <fileTransfer rootFolder="/home/harry/mygo/Blacklist_v2.0" accessType="SFTP" host="47.106.101.160" port="22" sshConfigId="5ce2320c-d78e-4866-957a-2828d361709b" sshConfig="aliyunHarry">
           <advancedOptions>
             <advancedOptions dataProtectionLevel="Private" passiveMode="true" shareSSLContext="true" />
           </advancedOptions>
-          <option name="port" value="22" />
         </fileTransfer>
       </webServer>
     </option>

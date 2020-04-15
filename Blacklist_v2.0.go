@@ -72,23 +72,36 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 		//get status
 		status := context.Writer.Status()
 
-		bufBody, _ := context.Get("bufBody")
+		interfaceRequestBody, _ := context.Get("requestBody")
+		interfaceResponse, _ := context.Get("response")
+		interfaceErr, _ := context.Get("responseErr")
+
+		httpResponse := interfaceResponse.(*fasthttp.Response)
+		bufRequestBody := interfaceRequestBody.([]byte)
+		a := bytes.NewBuffer(bufRequestBody).String()
+		log.Println(a)
+
+		var errorErr error
+		if interfaceErr == nil {
+			errorErr = nil
+		} else {
+			errorErr = interfaceErr.(error)
+		}
 
 		logger.WithFields(logrus.Fields{
-			"role":       "server",
-			"statusCode": status,
-			"latency":    latency,
-			"clientID":   context.Request.RemoteAddr,
-			"Method":     context.Request.Method,
-			"Path":       context.Request.URL.Path,
-		}).Info(bytes.NewBuffer(bufBody.([]byte)).String())
+			"server": logrus.Fields{
+				"statusCode": status,
+				"latency":    latency.String(),
+				"clientID":   context.Request.RemoteAddr,
+				"Method":     context.Request.Method,
+				"Path":       context.Request.URL.Path,
+			}}).Infoln(bytes.NewBuffer(bufRequestBody).String())
 
-		interfaceResp, _ := context.Get("response")
-		Resp := interfaceResp.(*fasthttp.Response)
 		logger.WithFields(logrus.Fields{
-			"role":   "client",
-			"status": Resp.StatusCode(),
-		}).Info(bytes.NewBuffer(Resp.Body()).String())
+			"client": logrus.Fields{
+				"status": httpResponse.StatusCode(),
+				"err":    errorErr,
+			}}).Info(bytes.NewBuffer(httpResponse.Body()).String())
 	}
 }
 
@@ -138,6 +151,7 @@ func main() {
 	} else {
 		jsonFormatter := new(logrus.JSONFormatter)
 		jsonFormatter.TimestampFormat = "2006/01/02-15:04:05"
+		jsonFormatter.DisableHTMLEscape = true
 		serverLog.SetFormatter(jsonFormatter)
 	}
 
@@ -158,9 +172,12 @@ func main() {
 
 func blacklistHandler(ctx *gin.Context) {
 
+	defer ctx.Request.Body.Close()
+
 	var byteResult []byte
 
-	requestUrl := "http://47.112.31.183:9993/vos_yt/blacklist/vos30002160"
+	//	requestUrl := "http://47.112.31.183:9993/vos_yt/blacklist/vos30002160"
+	requestUrl := "http://192.168.2.230:9993/vos_yt/blacklist/vos30002160"
 
 	BodyGet := ctx.Request.Body
 
@@ -168,12 +185,16 @@ func blacklistHandler(ctx *gin.Context) {
 
 	bufBody, _ := jsBody.MarshalJSON()
 
-	ctx.Set("bufBody", bufBody)
+	ctx.Set("requestBody", bufBody)
 
 	strCallee, _ := jsBody.GetPath("RewriteE164Req", "calleeE164").String()
 
 	lenCallee := len(strCallee)
+	//fasthttp response params initialize
 	response := fasthttp.AcquireResponse()
+
+	defer response.ConnectionClose()
+	var responseErr error
 	if lenCallee >= 11 {
 
 		//	strPrefix := strCallee[:lenCallee-11]
@@ -181,38 +202,65 @@ func blacklistHandler(ctx *gin.Context) {
 		strSuffix := strCallee[lenCallee-11:]
 
 		bufBody, _ := jsBody.MarshalJSON()
+
 		newJsBody, _ := simplejson.NewJson(bufBody)
 
 		newJsBody.SetPath([]string{"RewriteE164Req", "calleeE164"}, strSuffix)
 
 		byteNewBody, _ := newJsBody.MarshalJSON()
-
+		//fasthttp request params initialize
 		request := fasthttp.AcquireRequest()
+
 		request.Header.SetMethod("POST")
+
 		request.Header.SetContentType("application/json")
+
 		request.SetRequestURI(requestUrl)
+
 		request.SetBody(byteNewBody)
 
-		fasthttp.Do(request, response)
+		responseErr = fasthttp.Do(request, response)
+		//		responseErr = fasthttp.DoTimeout(request,response,2)
 
-		byteResp := response.Body()
+		if responseErr != nil {
+			if response.StatusCode() == 200 {
+				response.SetStatusCode(500)
+			}
 
-		jsResp, _ := simplejson.NewJson(byteResp)
+			byteResult, _ = jsBody.MarshalJSON()
 
-		strBackCallee, _ := jsResp.GetPath("RewriteE164Req", "calleeE1644").String()
+		} else {
 
-		//
-		byteResult, _ = jsBody.MarshalJSON()
-		if len(strBackCallee) != 11 {
-			byteResult, _ = jsResp.MarshalJSON()
+			byteResp := response.Body()
+
+			jsResp, _ := simplejson.NewJson(byteResp)
+
+			strBackCallee, _ := jsResp.GetPath("RewriteE164Req", "calleeE1644").String()
+
+			if len(strBackCallee) != 11 {
+
+				byteResult, _ = jsResp.MarshalJSON()
+
+			} else {
+
+				byteResult, _ = jsBody.MarshalJSON()
+
+			}
 		}
 	} else {
+
 		jsBody.SetPath([]string{"RewriteE164Req", "calleeE1644"}, "Wrong"+strCallee)
+
 		byteResult, _ = jsBody.MarshalJSON()
+
+		response.SetBody(byteResult)
+
 	}
 
+	ctx.Set("responseErr", responseErr)
 	ctx.Set("response", response)
 
 	ctx.Header("Content-Type", "application/json")
+
 	ctx.Writer.Write(byteResult)
 }
