@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"regexp"
+	"strconv"
 	"time"
 )
 
@@ -54,9 +55,11 @@ func GetLocalIpAddress(IP *string, InterfaceName string) {
 	}
 }
 
-func FlagArgs(port *string) {
-	*port = *flag.String("port", "8080", "specify a http port for use,default port:8080")
+func FlagArgs() *int {
+	port := flag.Int("port", 8080, "specify a http port for use,default port:8080")
+
 	flag.Parse()
+	return port
 }
 
 func Logger(logger *logrus.Logger) gin.HandlerFunc {
@@ -136,13 +139,12 @@ var serverLog *logrus.Logger
 
 func main() {
 
-	var port string
 	var IPAddress string
 	GetLocalIpAddress(&IPAddress, "WLAN")
-	FlagArgs(&port)
+	port := *FlagArgs()
 	serverLog = logrus.New()
 
-	gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.DebugMode)
 	if gin.Mode() == gin.DebugMode {
 		textFormatter := new(logrus.TextFormatter)
 		textFormatter.TimestampFormat = "2006/01/02-15:04:05"
@@ -166,7 +168,7 @@ func main() {
 	router.Use(Logger(serverLog))
 
 	router.POST("/vos3000/blacklist", blacklistHandler)
-	router.Run(IPAddress + ":" + port)
+	router.Run(IPAddress + ":" + strconv.Itoa(port))
 
 }
 
