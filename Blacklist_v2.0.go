@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"github.com/bitly/go-simplejson"
 	"github.com/gin-gonic/gin"
@@ -55,11 +54,12 @@ func GetLocalIpAddress(IP *string, InterfaceName string) {
 	}
 }
 
-func FlagArgs() *int {
+func FlagArgs() (*int, *bool, *int) {
 	port := flag.Int("port", 8080, "specify a http port for use,default port:8080")
-
+	debug := flag.Bool("debug", false, "using debug mode(default no)")
+	loglevel := flag.Int("level", 2, "specify a log level,0 - 5 for trace,debug,info,warning,error,fatal,panic")
 	flag.Parse()
-	return port
+	return port, debug, loglevel
 }
 
 func Logger(logger *logrus.Logger) gin.HandlerFunc {
@@ -75,21 +75,15 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 		//get status
 		status := context.Writer.Status()
 
+		//获取请求体接口
 		interfaceRequestBody, _ := context.Get("requestBody")
-		interfaceResponse, _ := context.Get("response")
-		interfaceErr, _ := context.Get("responseErr")
 
-		httpResponse := interfaceResponse.(*fasthttp.Response)
-		bufRequestBody := interfaceRequestBody.([]byte)
-		a := bytes.NewBuffer(bufRequestBody).String()
-		log.Println(a)
+		//请求体接口转json格式
+		jsRequestBody := interfaceRequestBody.(*simplejson.Json)
 
-		var errorErr error
-		if interfaceErr == nil {
-			errorErr = nil
-		} else {
-			errorErr = interfaceErr.(error)
-		}
+		callId, _ := jsRequestBody.GetPath("RewriteE164Req", "callId").Int()
+		calleeE164, _ := jsRequestBody.GetPath("RewriteE164Req", "calleeE164").String()
+		callerE164, _ := jsRequestBody.GetPath("RewriteE164Req", "callerE164").String()
 
 		logger.WithFields(logrus.Fields{
 			"server": logrus.Fields{
@@ -98,25 +92,75 @@ func Logger(logger *logrus.Logger) gin.HandlerFunc {
 				"clientID":   context.Request.RemoteAddr,
 				"Method":     context.Request.Method,
 				"Path":       context.Request.URL.Path,
-			}}).Infoln(bytes.NewBuffer(bufRequestBody).String())
+				"requestBody": logrus.Fields{
+					"callId":     callId,
+					"calleeE164": calleeE164,
+					"callerE164": callerE164,
+				}}}).Debug()
 
+		strResponse, msg := responseHandle(context)
 		logger.WithFields(logrus.Fields{
 			"client": logrus.Fields{
-				"status": httpResponse.StatusCode(),
-				"err":    errorErr,
-			}}).Info(bytes.NewBuffer(httpResponse.Body()).String())
+				"response": strResponse,
+			}}).Debug(msg)
 	}
 }
+func responseHandle(context *gin.Context) (logrus.Fields, string) {
 
+	//获取响应的错误信息接口
+	interfaceErr, err := context.Get("responseErr")
+	//判断是否有错误信息产生
+	if err == true {
+		return logrus.Fields{
+			"responseErr": interfaceErr.(error).Error(),
+		}, "response error"
+	}
+
+	//获取响应的消息接口
+	interfaceResponse, _ := context.Get("response")
+	//接口格式转换
+	response, _ := interfaceResponse.(*fasthttp.Response)
+	//转json格式
+	jsResponse, jsErr := simplejson.NewJson(response.Body())
+	if jsErr != nil {
+		//响应信息转json失败，内容非json数据
+		return logrus.Fields{
+			"statusCode": response.StatusCode(),
+			"err":        jsErr.Error(),
+		}, "response msg error"
+	}
+
+	callId, _ := jsResponse.GetPath("RewriteE164Rsp", "callId").Int()
+	calleeE164, _ := jsResponse.GetPath("RewriteE164Rsp", "calleeE164").String()
+	callerE164, _ := jsResponse.GetPath("RewriteE164Rsp", "callerE164").String()
+
+	return logrus.Fields{
+		"statusCode": response.StatusCode(),
+		"responseBody": logrus.Fields{
+			"callId":     callId,
+			"calleeE164": calleeE164,
+			"callerE164": callerE164,
+		},
+	}, "normal"
+}
 func setRotate(logger *logrus.Logger) logrus.Hook {
 
+	//设置日志特殊功能
 	logWrite, _ := rotatelogs.New(
+		//日志存放路径和命名
 		"%Y-%m-%d/%H/"+"%Y%m%d%H.log",
+		//设置软连接（快捷方式）
 		rotatelogs.WithLinkName("./fileLog.log"),
+		//WithMaxAge和RotationCount二选一
+		//设置日志保存的最长时间
 		rotatelogs.WithMaxAge(time.Hour),
+		//设置日志保存的个数
+		//rotatelogs.WithRotationCount(10),
+		//设置日志分割的时间
 		rotatelogs.WithRotationTime(time.Hour),
 	)
 
+	//设置日志输出方式
 	logger.SetOutput(io.MultiWriter(logWrite, os.Stdout))
 
 	return nil
@@ -141,10 +185,16 @@ func main() {
 
 	var IPAddress string
 	GetLocalIpAddress(&IPAddress, "WLAN")
-	port := *FlagArgs()
+	port, debug, logLevel := FlagArgs()
+
+	if *debug {
+		gin.SetMode(gin.DebugMode)
+	} else {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
 	serverLog = logrus.New()
 
-	gin.SetMode(gin.DebugMode)
 	if gin.Mode() == gin.DebugMode {
 		textFormatter := new(logrus.TextFormatter)
 		textFormatter.TimestampFormat = "2006/01/02-15:04:05"
@@ -153,11 +203,11 @@ func main() {
 	} else {
 		jsonFormatter := new(logrus.JSONFormatter)
 		jsonFormatter.TimestampFormat = "2006/01/02-15:04:05"
-		jsonFormatter.DisableHTMLEscape = true
+		jsonFormatter.PrettyPrint = false
 		serverLog.SetFormatter(jsonFormatter)
 	}
 
-	serverLog.SetLevel(logrus.InfoLevel)
+	serverLog.SetLevel(logrus.Level(6 - *logLevel))
 
 	serverLog.AddHook(&DefaultFieldHook{})
 
@@ -167,9 +217,16 @@ func main() {
 
 	router.Use(Logger(serverLog))
 
-	router.POST("/vos3000/blacklist", blacklistHandler)
-	router.Run(IPAddress + ":" + strconv.Itoa(port))
+	relativePath := "/vos3000/blacklist"
+	router.POST(relativePath, blacklistHandler)
 
+	serverLog.WithFields(logrus.Fields{
+		"Server":   IPAddress + ":" + strconv.Itoa(*port),
+		"Path":     relativePath,
+		"Method":   "POST",
+		"logLevel": serverLog.GetLevel().String(),
+	}).Print("Server initialized")
+	router.Run(IPAddress + ":" + strconv.Itoa(*port))
 }
 
 func blacklistHandler(ctx *gin.Context) {
@@ -185,9 +242,9 @@ func blacklistHandler(ctx *gin.Context) {
 
 	jsBody, _ := simplejson.NewFromReader(BodyGet)
 
-	bufBody, _ := jsBody.MarshalJSON()
+	//	bufBody, _ := jsBody.MarshalJSON()
 
-	ctx.Set("requestBody", bufBody)
+	ctx.Set("requestBody", jsBody)
 
 	strCallee, _ := jsBody.GetPath("RewriteE164Req", "calleeE164").String()
 
@@ -226,9 +283,11 @@ func blacklistHandler(ctx *gin.Context) {
 
 		if responseErr != nil {
 			if response.StatusCode() == 200 {
+				ctx.Set("responseErr", responseErr)
 				response.SetStatusCode(500)
 			}
 
+			jsBody.Set("msg", "remote server error")
 			byteResult, _ = jsBody.MarshalJSON()
 
 		} else {
@@ -251,15 +310,22 @@ func blacklistHandler(ctx *gin.Context) {
 		}
 	} else {
 
-		jsBody.SetPath([]string{"RewriteE164Req", "calleeE1644"}, "Wrong"+strCallee)
+		newJsBody := simplejson.New()
 
-		byteResult, _ = jsBody.MarshalJSON()
+		requestCallId, _ := jsBody.GetPath("RewriteE164Req", "callId").Int()
+		requestCallee, _ := jsBody.GetPath("RewriteE164Req", "calleeE164").String()
+		requestCaller, _ := jsBody.GetPath("RewriteE164Req", "callerE164").String()
+
+		newJsBody.SetPath([]string{"RewriteE164Rsp", "calleeE164"}, "Wrong"+requestCallee)
+		newJsBody.SetPath([]string{"RewriteE164Rsp", "callerE164"}, requestCaller)
+		newJsBody.SetPath([]string{"RewriteE164Rsp", "callId"}, requestCallId)
+
+		byteResult, _ = newJsBody.MarshalJSON()
 
 		response.SetBody(byteResult)
 
 	}
 
-	ctx.Set("responseErr", responseErr)
 	ctx.Set("response", response)
 
 	ctx.Header("Content-Type", "application/json")
