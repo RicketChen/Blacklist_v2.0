@@ -1,10 +1,13 @@
 package main
 
 import (
+	"Blacklist_v2.0/esPackage"
+	"context"
 	"flag"
 	"github.com/bitly/go-simplejson"
 	"github.com/gin-gonic/gin"
 	"github.com/lestrrat/go-file-rotatelogs"
+	"github.com/olivere/elastic/v7"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 	"io"
@@ -179,7 +182,29 @@ func (hook *DefaultFieldHook) Levels() []logrus.Level {
 	return logrus.AllLevels
 }
 
-var serverLog *logrus.Logger
+var ServerLog *logrus.Logger
+
+var esMapping = `{
+    "mappings": {
+        "properties": {
+            "timestamp": {
+                "type": "date",
+                "format":"epoch_millis"
+            },
+            "phoneInfo": {
+                "type": "object",
+                "properties": {
+                    "nums": {
+                        "type": "text"
+                    },
+                    "numstype": {
+                        "type": "text"
+                    }
+                }
+            }
+        }
+    }
+}`
 
 func main() {
 
@@ -193,38 +218,105 @@ func main() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	serverLog = logrus.New()
+	ServerLog = logrus.New()
 
 	if gin.Mode() == gin.DebugMode {
 		textFormatter := new(logrus.TextFormatter)
 		textFormatter.TimestampFormat = "2006/01/02-15:04:05"
 		textFormatter.ForceColors = false
-		serverLog.SetFormatter(textFormatter)
+		ServerLog.SetFormatter(textFormatter)
 	} else {
 		jsonFormatter := new(logrus.JSONFormatter)
 		jsonFormatter.TimestampFormat = "2006/01/02-15:04:05"
 		jsonFormatter.PrettyPrint = false
-		serverLog.SetFormatter(jsonFormatter)
+		ServerLog.SetFormatter(jsonFormatter)
 	}
 
-	serverLog.SetLevel(logrus.Level(6 - *logLevel))
+	ServerLog.SetLevel(logrus.Level(6 - *logLevel))
 
-	serverLog.AddHook(&DefaultFieldHook{})
+	ServerLog.AddHook(&DefaultFieldHook{})
 
-	setRotate(serverLog)
+	setRotate(ServerLog)
 
 	router := gin.New()
 
-	router.Use(Logger(serverLog))
+	router.Use(Logger(ServerLog))
+
+	esPackage.EsInit()
+
+	esCtx := context.Background()
+	esHost := "http://127.0.0.1:9211"
+	client, err := elastic.NewClient(elastic.SetURL(esHost), elastic.SetSniff(false))
+	if err != nil {
+		ServerLog.Fatal("client error :", err)
+	}
+	info, code, err := client.Ping(esHost).Do(esCtx)
+	if err != nil {
+		ServerLog.Fatal("ping error :", err)
+	}
+	ServerLog.Printf("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
+
+	indexName := []string{"blacklist", "whitelist", "ytblacklist"}
+	for _, temp := range indexName {
+		ret, _ := client.IndexExists(temp).Do(esCtx)
+		if ret != false {
+			ServerLog.WithField("index", temp).Debug("index exists")
+			continue
+		} else {
+			createIndex, err := client.CreateIndex(temp).BodyString(esMapping).Do(esCtx)
+			if err != nil {
+				ServerLog.WithField("index", temp).Fatal("Create index failed!")
+			}
+			if createIndex.Acknowledged {
+				ServerLog.WithFields(logrus.Fields{
+					"index":        temp,
+					"Acknowledged": createIndex.Acknowledged,
+				})
+			}
+		}
+	}
+
+	/*	for i:=0;i<10;i++ {
+			jsEsBody := simplejson.New()
+			nowUnixTime := time.Now().UnixNano()
+			jsEsBody.Set("timestamp", nowUnixTime)
+			phoneNums := 13800138000+i
+			jsEsBody.SetPath([]string{"phoneInfo", "nums"}, strconv.Itoa(phoneNums))
+			jsEsBody.SetPath([]string{"phoneInfo", "numstype"}, "blacklist")
+
+			client.Index().Index("blacklist").Id(strconv.Itoa(int(nowUnixTime))).BodyJson(jsEsBody).Do(esCtx)
+		//	time.Sleep(time.Second)
+		}*/
+
+	searchRet, searchErr := client.Search("blacklist").
+		Query(elastic.NewTermQuery("phoneInfo.nums", "13800138000")).
+		Do(esCtx)
+	if searchErr != nil {
+		ServerLog.Fatal(searchErr)
+	}
+	for _, temp := range searchRet.Hits.Hits {
+		byteSource, _ := temp.Source.MarshalJSON()
+		jsSource, _ := simplejson.NewJson(byteSource)
+		nums, _ := jsSource.GetPath("phoneInfo", "nums").String()
+		numstype, _ := jsSource.GetPath("phoneInfo", "numstype").String()
+		ServerLog.WithFields(logrus.Fields{
+			"index":    temp.Index,
+			"id":       temp.Id,
+			"nums":     nums,
+			"numstype": numstype,
+		}).Info(*temp.Score)
+	}
+
+	return
 
 	relativePath := "/vos3000/blacklist"
 	router.POST(relativePath, blacklistHandler)
 
-	serverLog.WithFields(logrus.Fields{
+	ServerLog.WithFields(logrus.Fields{
 		"Server":   IPAddress + ":" + strconv.Itoa(*port),
 		"Path":     relativePath,
 		"Method":   "POST",
-		"logLevel": serverLog.GetLevel().String(),
+		"logLevel": ServerLog.GetLevel().String(),
 	}).Print("Server initialized")
 	router.Run(IPAddress + ":" + strconv.Itoa(*port))
 }
