@@ -2,12 +2,11 @@ package main
 
 import (
 	"Blacklist_v2.0/esPackage"
-	"context"
 	"flag"
+	"fmt"
 	"github.com/bitly/go-simplejson"
 	"github.com/gin-gonic/gin"
 	"github.com/lestrrat/go-file-rotatelogs"
-	"github.com/olivere/elastic/v7"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 	"io"
@@ -242,70 +241,85 @@ func main() {
 
 	router.Use(Logger(ServerLog))
 
-	esPackage.EsInit()
-
-	esCtx := context.Background()
+	esInfo := new(esPackage.EsInfo)
 	esHost := "http://127.0.0.1:9211"
-	client, err := elastic.NewClient(elastic.SetURL(esHost), elastic.SetSniff(false))
-	if err != nil {
-		ServerLog.Fatal("client error :", err)
-	}
-	info, code, err := client.Ping(esHost).Do(esCtx)
-	if err != nil {
-		ServerLog.Fatal("ping error :", err)
-	}
-	ServerLog.Printf("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
 
-	indexName := []string{"blacklist", "whitelist", "ytblacklist"}
-	for _, temp := range indexName {
-		ret, _ := client.IndexExists(temp).Do(esCtx)
-		if ret != false {
-			ServerLog.WithField("index", temp).Debug("index exists")
-			continue
-		} else {
-			createIndex, err := client.CreateIndex(temp).BodyString(esMapping).Do(esCtx)
-			if err != nil {
-				ServerLog.WithField("index", temp).Fatal("Create index failed!")
-			}
-			if createIndex.Acknowledged {
-				ServerLog.WithFields(logrus.Fields{
-					"index":        temp,
-					"Acknowledged": createIndex.Acknowledged,
-				})
+	esInfo.EsSetInfo(ServerLog, esHost)
+
+	esInfo.EsInit()
+
+	a, b, c := esInfo.EsSetIndex("ASD")
+	fmt.Println(a)
+	fmt.Println(b)
+	fmt.Println(c)
+
+	//	esInfo.indicesInfo[0].SetIndexName("AA")
+	//	blackList := &esInfo.indicesInfo[0]
+	//	whiteList := esInfo.indicesInfo[1]
+	//	ytBlacklist := esInfo.indicesInfo[2]
+
+	//	blackList.SetIndexName("blacklist")
+	//	whiteList.SetIndexName("whitelist")
+	//	ytBlacklist.SetIndexName("ytBlacklist")
+
+	/*	for i,j := range esInfo.indicesInfo {
+		log.Println(i,j.IndexName)
+	}*/
+
+	//	fmt.Println(esInfo.EsInit())
+
+	/*	ServerLog.Printf("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
+
+		indexName := []string{"blacklist", "whitelist", "ytblacklist"}
+		for _, temp := range indexName {
+			ret, _ := client.IndexExists(temp).Do(esCtx)
+			if ret != false {
+				ServerLog.WithField("index", temp).Debug("index exists")
+				continue
+			} else {
+				createIndex, err := client.CreateIndex(temp).BodyString(esMapping).Do(esCtx)
+				if err != nil {
+					ServerLog.WithField("index", temp).Fatal("Create index failed!")
+				}
+				if createIndex.Acknowledged {
+					ServerLog.WithFields(logrus.Fields{
+						"index":        temp,
+						"Acknowledged": createIndex.Acknowledged,
+					})
+				}
 			}
 		}
-	}
 
-	/*	for i:=0;i<10;i++ {
-			jsEsBody := simplejson.New()
-			nowUnixTime := time.Now().UnixNano()
-			jsEsBody.Set("timestamp", nowUnixTime)
-			phoneNums := 13800138000+i
-			jsEsBody.SetPath([]string{"phoneInfo", "nums"}, strconv.Itoa(phoneNums))
-			jsEsBody.SetPath([]string{"phoneInfo", "numstype"}, "blacklist")
+		/*	for i:=0;i<10;i++ {
+				jsEsBody := simplejson.New()
+				nowUnixTime := time.Now().UnixNano()
+				jsEsBody.Set("timestamp", nowUnixTime)
+				phoneNums := 13800138000+i
+				jsEsBody.SetPath([]string{"phoneInfo", "nums"}, strconv.Itoa(phoneNums))
+				jsEsBody.SetPath([]string{"phoneInfo", "numstype"}, "blacklist")
 
-			client.Index().Index("blacklist").Id(strconv.Itoa(int(nowUnixTime))).BodyJson(jsEsBody).Do(esCtx)
-		//	time.Sleep(time.Second)
+				client.Index().Index("blacklist").Id(strconv.Itoa(int(nowUnixTime))).BodyJson(jsEsBody).Do(esCtx)
+			//	time.Sleep(time.Second)
+			}
+
+		searchRet, searchErr := client.Search("blacklist").
+			Query(elastic.NewTermQuery("phoneInfo.nums", "13800138000")).
+			Do(esCtx)
+		if searchErr != nil {
+			ServerLog.Fatal(searchErr)
+		}
+		for _, temp := range searchRet.Hits.Hits {
+			byteSource, _ := temp.Source.MarshalJSON()
+			jsSource, _ := simplejson.NewJson(byteSource)
+			nums, _ := jsSource.GetPath("phoneInfo", "nums").String()
+			numstype, _ := jsSource.GetPath("phoneInfo", "numstype").String()
+			ServerLog.WithFields(logrus.Fields{
+				"index":    temp.Index,
+				"id":       temp.Id,
+				"nums":     nums,
+				"numstype": numstype,
+			}).Info(*temp.Score)
 		}*/
-
-	searchRet, searchErr := client.Search("blacklist").
-		Query(elastic.NewTermQuery("phoneInfo.nums", "13800138000")).
-		Do(esCtx)
-	if searchErr != nil {
-		ServerLog.Fatal(searchErr)
-	}
-	for _, temp := range searchRet.Hits.Hits {
-		byteSource, _ := temp.Source.MarshalJSON()
-		jsSource, _ := simplejson.NewJson(byteSource)
-		nums, _ := jsSource.GetPath("phoneInfo", "nums").String()
-		numstype, _ := jsSource.GetPath("phoneInfo", "numstype").String()
-		ServerLog.WithFields(logrus.Fields{
-			"index":    temp.Index,
-			"id":       temp.Id,
-			"nums":     nums,
-			"numstype": numstype,
-		}).Info(*temp.Score)
-	}
 
 	return
 
