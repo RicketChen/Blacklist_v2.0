@@ -3,10 +3,10 @@ package main
 import (
 	"Blacklist_v2.0/esPackage"
 	"flag"
-	"fmt"
 	"github.com/bitly/go-simplejson"
 	"github.com/gin-gonic/gin"
 	"github.com/lestrrat/go-file-rotatelogs"
+	"github.com/olivere/elastic/v7"
 	"github.com/sirupsen/logrus"
 	"github.com/valyala/fasthttp"
 	"io"
@@ -196,7 +196,7 @@ var esMapping = `{
                     "nums": {
                         "type": "text"
                     },
-                    "numstype": {
+                    "numsType": {
                         "type": "text"
                     }
                 }
@@ -204,6 +204,11 @@ var esMapping = `{
         }
     }
 }`
+
+const (
+	blacklist = "blacklist"
+	whitelist = "whitelist"
+)
 
 func main() {
 
@@ -241,54 +246,25 @@ func main() {
 
 	router.Use(Logger(ServerLog))
 
-	esInfo := new(esPackage.EsInfo)
+	esInfo := esPackage.GetEsInstance()
 	esHost := "http://127.0.0.1:9211"
 
 	esInfo.EsSetInfo(ServerLog, esHost)
 
 	esInfo.EsInit()
 
-	a, b, c := esInfo.EsSetIndex("ASD")
-	fmt.Println(a)
-	fmt.Println(b)
-	fmt.Println(c)
+	indexInfo, _ := esInfo.EsSetIndex("asd", esMapping)
+	//	indexInfo.InsertDoc("13800138000",blacklist)
 
-	//	esInfo.indicesInfo[0].SetIndexName("AA")
-	//	blackList := &esInfo.indicesInfo[0]
-	//	whiteList := esInfo.indicesInfo[1]
-	//	ytBlacklist := esInfo.indicesInfo[2]
-
-	//	blackList.SetIndexName("blacklist")
-	//	whiteList.SetIndexName("whitelist")
-	//	ytBlacklist.SetIndexName("ytBlacklist")
-
-	/*	for i,j := range esInfo.indicesInfo {
-		log.Println(i,j.IndexName)
-	}*/
-
-	//	fmt.Println(esInfo.EsInit())
-
-	/*	ServerLog.Printf("Elasticsearch returned with code %d and version %s", code, info.Version.Number)
-
-		indexName := []string{"blacklist", "whitelist", "ytblacklist"}
-		for _, temp := range indexName {
-			ret, _ := client.IndexExists(temp).Do(esCtx)
-			if ret != false {
-				ServerLog.WithField("index", temp).Debug("index exists")
-				continue
-			} else {
-				createIndex, err := client.CreateIndex(temp).BodyString(esMapping).Do(esCtx)
-				if err != nil {
-					ServerLog.WithField("index", temp).Fatal("Create index failed!")
-				}
-				if createIndex.Acknowledged {
-					ServerLog.WithFields(logrus.Fields{
-						"index":        temp,
-						"Acknowledged": createIndex.Acknowledged,
-					})
-				}
-			}
-		}
+	termQuery := elastic.NewTermQuery("phoneInfo.nums", "13800138000")
+	searchRet, err := esInfo.EsClient.Search(indexInfo.IndexName).Query(termQuery).Do(esInfo.EsCtx)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	log.Println(searchRet.Hits.TotalHits)
+	//	fmt.Println(indexInfo)
+	/*
 
 		/*	for i:=0;i<10;i++ {
 				jsEsBody := simplejson.New()
